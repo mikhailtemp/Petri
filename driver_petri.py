@@ -13,15 +13,21 @@ class Driver(Supervisor):
         self.keyboard.enable(self.timeStep)
         self.robot_names = ["robot1", "robot2", "robot3", "robot4"]
         self.robot_defs  = ["ROBOT1", "ROBOT2", "ROBOT3", "ROBOT4"]
-        self.robots = {n: self.getFromDef(d)
-                       for n,d in zip(self.robot_names, self.robot_defs)}
+        self.robots = {}
+        for n, d in zip(self.robot_names, self.robot_defs):
+            node = self.getFromDef(d)
+            if node is None:
+                print("[DRIVER] ERROR: DEF " + d + " not found in scene!")
+            else:
+                print("[DRIVER] Found " + d)
+            self.robots[n] = node
 
         ring = [
             (-0.8,  0.8),  # 0: верхний левый
-            (-0.8,  0.0),  # 1: вход zone_A  <-- критическая
+            (-0.8,  0.0),  # 1: вход zone_A
             (-0.8, -0.8),  # 2: нижний левый
             ( 0.8, -0.8),  # 3: нижний правый
-            ( 0.8,  0.0),  # 4: вход zone_B  <-- критическая
+            ( 0.8,  0.0),  # 4: вход zone_B
             ( 0.8,  0.8),  # 5: верхний правый
         ]
         self.waypoints = {
@@ -51,23 +57,25 @@ class Driver(Supervisor):
         self.stop_flag     = threading.Event()
         self.arrived_event = {n: threading.Event() for n in self.robot_names}
 
-        # Флаг: спавн завершён, можно запускать потоки
-        self.init_done = False
-
     def run(self):
         # ---- INIT в главном потоке ----
         print("[INIT] Placing robots at start positions")
         for name in self.robot_names:
+            node = self.robots[name]
+            if node is None:
+                print("[INIT] Skipping " + name + " — node not found")
+                continue
             start = self.waypoints[name][0]
-            node  = self.robots[name]
-            node.getField('translation').setSFVec3f([start[0], 0.025, start[1]])
+            pos = [start[0], 0.025, start[1]]
+            print("[INIT] " + name + " -> " + str(pos))
+            node.getField('translation').setSFVec3f(pos)
             node.getField('rotation').setSFRotation([0, 1, 0, 0])
 
-        # Даём физике 30 шагов успокоиться — всё в главном потоке
+        # 30 шагов — всё в главном потоке
         for _ in range(30):
             self.step(self.timeStep)
 
-        # ---- RUN: запускаем потоки ----
+        # ---- RUN ----
         print("[RUN] Starting robot threads")
         for name in self.robot_names:
             c = RobotController(self, name)
@@ -75,7 +83,6 @@ class Driver(Supervisor):
             t.daemon = True
             t.start()
 
-        # Главный цикл симуляции
         while True:
             self.process_receiver()
             if self.step(self.timeStep) == -1:
